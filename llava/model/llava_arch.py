@@ -21,7 +21,7 @@ import torch.nn as nn
 from .multimodal_encoder.builder import build_vision_tower
 from .multimodal_projector.builder import build_vision_projector
 
-from llava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_PATCH_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
+from llava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_PATCH_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN,DEFAULT_MSK_TOKEN,DEFAULT_MSK_TGT_TOKEN
 
 
 class LlavaMetaModel:
@@ -212,6 +212,8 @@ class LlavaMetaForCausalLM(ABC):
         return None, attention_mask, past_key_values, new_input_embeds, new_labels
 
     def initialize_vision_tokenizer(self, model_args, tokenizer):
+
+       
         if model_args.mm_use_im_patch_token:
             tokenizer.add_tokens([DEFAULT_IMAGE_PATCH_TOKEN], special_tokens=True)
             self.resize_token_embeddings(len(tokenizer))
@@ -254,3 +256,10 @@ class LlavaMetaForCausalLM(ABC):
                     p.requires_grad = False
                 for p in self.get_output_embeddings().parameters():
                     p.requires_grad = False
+
+        if model_args.mm_use_mask_token:
+            tokenizer.add_tokens([DEFAULT_MSK_TOKEN,DEFAULT_MSK_TGT_TOKEN])
+            self.resize_token_embeddings(len(tokenizer))
+        #tokenizer(DEFAULT_IM_GEN_TOKEN,add_special_tokens=False)['input_ids'][0]
+        self.DEFAULT_MSK_TOKEN_IDX = tokenizer(DEFAULT_MSK_TOKEN,add_special_tokens=False)['input_ids'][0]
+        self.DEFAULT_MSK_TGT_TOKEN_IDX = tokenizer(DEFAULT_MSK_TGT_TOKEN,add_special_tokens=False)['input_ids'][0]

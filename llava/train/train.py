@@ -26,7 +26,7 @@ import torch
 
 import transformers
 
-from llava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
+from llava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN,DEFAULT_MSK_TOKEN
 from torch.utils.data import Dataset
 from llava.train.llava_trainer import LLaVATrainer
 
@@ -58,6 +58,7 @@ class ModelArguments:
     mm_use_im_start_end: bool = field(default=False)
     mm_use_im_patch_token: bool = field(default=True)
     mm_vision_select_feature: Optional[str] = field(default="patch")
+    dev: str = "none"
 
 
 @dataclass
@@ -662,6 +663,24 @@ class LazySupervisedDataset(Dataset):
         if isinstance(i, int):
             sources = [sources]
         assert len(sources) == 1, "Don't know why it is wrapped to a list"  # FIXME
+        json_payload = sources[0] # this is the data dict
+        # keys: e.g.
+        #   {
+        #     "id": "005947502",
+        #     "image": "00594/005947502.jpg",
+        #      "mask": [ some format],
+        #      "target_mask": [some format]
+        #     "conversations": [
+        #       {
+        #         "from": "human",
+        #         "value": "<mask><image>\segment this dog?"
+        #       },
+        #       {
+        #         "from": "gpt",
+        #         "value": "Sure, it is <mask_tgt>"
+        #       }
+        #     ]
+        #   },
         if 'image' in sources[0]:
             image_file = self.list_data_dict[i]['image']
             image_folder = self.data_args.image_folder
@@ -689,6 +708,16 @@ class LazySupervisedDataset(Dataset):
                 self.data_args)
         else:
             sources = copy.deepcopy([e["conversations"] for e in sources])
+                
+        masks = []
+        target_masks = []
+        if 'mask' in json_payload:
+            masks = json_payload['mask']
+            ## TODO: load sth
+            n_masks = len(masks)
+            target_masks = json_payload['target_mask']
+            assert DEFAULT_MSK_TOKEN in sources[0][0]
+            sources[0][0].replace(DEFAULT_MSK_TOKEN,DEFAULT_MSK_TOKEN*n_masks) # <mask><mask> ......................
         data_dict = preprocess(
             sources,
             self.tokenizer,
@@ -704,6 +733,8 @@ class LazySupervisedDataset(Dataset):
             # image does not exist in the data, but the model is multimodal
             crop_size = self.data_args.image_processor.crop_size
             data_dict['image'] = torch.zeros(3, crop_size['height'], crop_size['width'])
+        data_dict['mask'] = masks
+        data_dict['target_mask'] = target_masks
         return data_dict
 
 
@@ -730,7 +761,29 @@ class DataCollatorForSupervisedDataset(object):
             labels=labels,
             attention_mask=input_ids.ne(self.tokenizer.pad_token_id),
         )
-
+        masks=list([x['mask'] for x in instances])
+        mask_targets=list([x['mask_targets'] for x in instances])
+        gathered_masks= dict(
+            idx=[],
+            tensor=[],
+        )
+        gathered_mask_targets = dict(
+            idx=[],
+            tensor=[],
+        )
+        for idx,tgt in enumerate(masks):
+            for msk in tgt:
+                gathered_masks['tensor'].append(msk)
+                gathered_masks['idx'].append(idx)
+        for idx,tgt in enumerate(mask_targets):
+            for msk in tgt:
+                gathered_mask_targets['tensor'].append(msk)
+                gathered_mask_targets['idx'].append(idx)
+        for d in [gathered_mask_targets,gathered_masks]:
+            d['idx'] = torch.tensor(gathered_masks,dtype=torch.long)
+            d['tensor'] = torch.stack(d['tensor']) # N, D_mask
+        batch['masks'] = gathered_masks
+        batch['mask_targets'] = gathered_mask_targets
         if 'image' in instances[0]:
             images = [instance['image'] for instance in instances]
             if all(x is not None and x.shape == images[0].shape for x in images):
@@ -797,6 +850,19 @@ def train():
                 **bnb_model_from_pretrained_args
             )
     else:
+        if model_args.dev == 'test': # test full size no load
+            cfg = LlavaConfig.from_pretrained(model_args.model_name_or_path)
+            model = LlavaLlamaForCausalLM._from_config(cfg)
+        elif model_args.dev == 'test2': # test 2 layer
+            cfg = LlavaConfig.from_pretrained(model_args.model_name_or_path)
+            cfg.num_hidden_layers = 2
+            model = LlavaLlamaForCausalLM._from_config(cfg)
+        else:
+            model = LlavaLlamaForCausalLM.from_pretrained(
+                model_args.model_name_or_path,
+                cache_dir=training_args.cache_dir,
+                **bnb_model_from_pretrained_args
+            )
         model = transformers.LlamaForCausalLM.from_pretrained(
             model_args.model_name_or_path,
             cache_dir=training_args.cache_dir,

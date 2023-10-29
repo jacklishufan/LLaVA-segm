@@ -65,15 +65,26 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
         output_hidden_states: Optional[bool] = None,
         images: Optional[torch.FloatTensor] = None,
         return_dict: Optional[bool] = None,
+        masks: Optional[bool] = None,
+        mask_targets: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
+        raw_input_ids = input_ids
         input_ids, attention_mask, past_key_values, inputs_embeds, labels = self.prepare_inputs_labels_for_multimodal(input_ids, attention_mask, past_key_values, labels, images)
-
+        # replace_mask
+        mask_id_mask = raw_input_ids == self.DEFAULT_MSK_TOKEN_IDX
+        mask_target_id_mask = raw_input_ids == self.DEFAULT_MSK_TOKEN_IDX # N L
+        if len(mask_targets) > 0:
+            mask_tensors = self.mask_projection(masks['tensor'])
+            mask_target_tensors = self.mask_projection(mask_targets['tensor'])
+            bs = raw_input_ids.shape[0]
+            for idx in range(bs):
+                inputs_embeds[mask_id_mask[idx]] = mask_tensors[masks['idx']==idx]
+                inputs_embeds[mask_target_id_mask[idx]] = mask_target_tensors[masks['idx']==idx] ## replace
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
             input_ids=input_ids,
@@ -94,6 +105,16 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
             # Shift so that tokens < n predict n
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
+            if len(mask_targets) > 0:
+                gathered_mask = []
+                for idx in range(bs):
+                    curr_mask_pred = hidden_states[:,:-1][idx][mask_target_id_mask[idx][1:]]
+                    gathered_mask.append(curr_mask_pred)
+                gathered_mask = torch.cat(gathered_mask)
+                assert gathered_mask.shape == mask_targets['tensor'].shape
+                mask_loss = nn.MSELoss(mask_targets['tensor'])
+            else:
+                mask_loss = 0.0
             # Flatten the tokens
             loss_fct = CrossEntropyLoss()
             shift_logits = shift_logits.view(-1, self.config.vocab_size)
@@ -101,6 +122,7 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
             # Enable model/pipeline parallelism
             shift_labels = shift_labels.to(shift_logits.device)
             loss = loss_fct(shift_logits, shift_labels)
+            loss += mask_loss
 
         if not return_dict:
             output = (logits,) + outputs[1:]
