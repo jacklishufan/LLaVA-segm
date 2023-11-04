@@ -112,6 +112,7 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
                     gathered_mask.append(curr_mask_pred)
                 gathered_mask = torch.cat(gathered_mask)
                 assert gathered_mask.shape == mask_targets['tensor'].shape
+                # gathered_mask = self.mask_projection(gathered_mask)
                 mask_loss = nn.MSELoss(mask_targets['tensor'])
             else:
                 mask_loss = 0.0

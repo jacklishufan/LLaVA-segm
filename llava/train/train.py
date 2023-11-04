@@ -844,11 +844,19 @@ def train():
                 **bnb_model_from_pretrained_args
             )
         else:
-            model = LlavaLlamaForCausalLM.from_pretrained(
-                model_args.model_name_or_path,
-                cache_dir=training_args.cache_dir,
-                **bnb_model_from_pretrained_args
-            )
+            if model_args.dev == 'test': # test full size no load
+                cfg = LlavaConfig.from_pretrained(model_args.model_name_or_path)
+                model = LlavaLlamaForCausalLM._from_config(cfg)
+            elif model_args.dev == 'test2': # test 2 layer
+                cfg = LlavaConfig.from_pretrained(model_args.model_name_or_path)
+                cfg.num_hidden_layers = 2
+                model = LlavaLlamaForCausalLM._from_config(cfg)
+            else:
+                model = LlavaLlamaForCausalLM.from_pretrained(
+                    model_args.model_name_or_path,
+                    cache_dir=training_args.cache_dir,
+                    **bnb_model_from_pretrained_args
+                )
     else:
         if model_args.dev == 'test': # test full size no load
             cfg = LlavaConfig.from_pretrained(model_args.model_name_or_path)
@@ -863,11 +871,6 @@ def train():
                 cache_dir=training_args.cache_dir,
                 **bnb_model_from_pretrained_args
             )
-        model = transformers.LlamaForCausalLM.from_pretrained(
-            model_args.model_name_or_path,
-            cache_dir=training_args.cache_dir,
-            **bnb_model_from_pretrained_args
-        )
     model.config.use_cache = False
 
     if model_args.freeze_backbone:
