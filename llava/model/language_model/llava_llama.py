@@ -26,6 +26,8 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from ..llava_arch import LlavaMetaModel, LlavaMetaForCausalLM
 
+from ..multimodal_projector.builder import build_mask_projector
+
 
 class LlavaConfig(LlamaConfig):
     model_type = "llava"
@@ -41,11 +43,15 @@ class LlavaLlamaModel(LlavaMetaModel, LlamaModel):
 class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
     config_class = LlavaConfig
 
-    def __init__(self, config):
+    def __init__(self, config, mask_projection_params=None):
         super(LlamaForCausalLM, self).__init__(config)
         self.model = LlavaLlamaModel(config)
 
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+
+        # Initialize mask mask projection
+        if mask_projection_params is not None:
+            self.mask_projection = build_mask_projector(mask_projection_params)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -79,6 +85,7 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
         mask_id_mask = raw_input_ids == self.DEFAULT_MSK_TOKEN_IDX
         mask_target_id_mask = raw_input_ids == self.DEFAULT_MSK_TOKEN_IDX # N L
         if len(mask_targets) > 0:
+            # Question: why calling mask_projection here?
             mask_tensors = self.mask_projection(masks['tensor'])
             mask_target_tensors = self.mask_projection(mask_targets['tensor'])
             bs = raw_input_ids.shape[0]
@@ -113,6 +120,8 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
                 gathered_mask = torch.cat(gathered_mask)
                 assert gathered_mask.shape == mask_targets['tensor'].shape
                 # gathered_mask = self.mask_projection(gathered_mask)
+                # Question: is this ok?
+                mask_token_hidden_state = self.mask_projection(gathered_mask)
                 mask_loss = nn.MSELoss(mask_targets['tensor'])
             else:
                 mask_loss = 0.0

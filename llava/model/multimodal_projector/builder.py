@@ -33,6 +33,7 @@ class SimpleResBlock(nn.Module):
 def build_vision_projector(config, delay_load=False, **kwargs):
     projector_type = getattr(config, 'mm_projector_type', 'linear')
 
+    # Question: what are 'mm.hidden_size' and 'hidden_size'?
     if projector_type == 'linear':
         return nn.Linear(config.mm_hidden_size, config.hidden_size)
 
@@ -49,3 +50,28 @@ def build_vision_projector(config, delay_load=False, **kwargs):
         return IdentityMap()
 
     raise ValueError(f'Unknown projector type: {projector_type}')
+
+def build_mask_projector(params):
+    in_dim = 5210       # output dim of transformer
+    out_dim = 768       # dimput dim of mask DINO decoder
+
+    if params == 'linear':
+        return nn.Linear(in_dim, out_dim)
+
+    match = re.match(r'mlp_(\d+)x_(\d+)l_gelu$', params)
+    if match:
+        hidden_dim_ratio = int(match.group(1))
+        num_layers = int(match.group(2))
+        hidden_dim = in_dim * hidden_dim_ratio
+
+        modules = [nn.Linear(in_dim, hidden_dim), nn.GELU()]
+        for _ in range(1, num_layers):
+            modules.append(nn.Linear(hidden_dim, hidden_dim))
+            modules.append(nn.GELU())
+        # final layer
+        modules.append(nn.Linear(hidden_dim, out_dim))
+
+        print("DEBUG:", "Mask Projection layer consists:", modules)
+        return nn.Sequential(*modules)
+
+    raise ValueError(f'Unknown mask projection parameters: {params}')

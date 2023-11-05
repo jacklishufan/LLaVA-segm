@@ -58,6 +58,8 @@ class ModelArguments:
     mm_use_im_start_end: bool = field(default=False)
     mm_use_im_patch_token: bool = field(default=True)
     mm_vision_select_feature: Optional[str] = field(default="patch")
+    mm_use_mask_token: bool = field(default=True)
+    mask_projection_params: Optional[str] = field(default='linear')
     dev: str = "none"
 
 
@@ -850,7 +852,10 @@ def train():
             elif model_args.dev == 'test2': # test 2 layer
                 cfg = LlavaConfig.from_pretrained(model_args.model_name_or_path)
                 cfg.num_hidden_layers = 2
-                model = LlavaLlamaForCausalLM._from_config(cfg)
+                mask_projection_params_string = model_args.mask_projection_params
+                # Question: how to mask projection params into 'cfg'?
+                model = LlavaLlamaForCausalLM._from_config(cfg, 
+                                                          mask_projection_params=mask_projection_params_string)
             else:
                 model = LlavaLlamaForCausalLM.from_pretrained(
                     model_args.model_name_or_path,
